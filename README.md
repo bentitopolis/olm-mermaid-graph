@@ -1,4 +1,4 @@
-## Output Mermaid graph script from bundle database
+## Output Mermaid graph script from Operator Lifecycle Manager indices
 
 ### Required:
 make, sqlite3, go v14+, container execution environment (such as Docker, podman)
