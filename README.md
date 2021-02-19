@@ -3,8 +3,6 @@
 ### Required:
 make, sqlite3, go v14+, container execution environment (such as Docker, podman)
 
-Way to create Mermaid graph image from script text, suggested method:
-
 ### Usage
 Adjust the sqlite file pointed to in `sqlite3.sql`, this controls what index gets graphed
 
