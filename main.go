@@ -58,91 +58,71 @@ func main() {
 }
 
 func run() error {
-	pkgs, err := loadPackages()
+	_, channelEntries, err := loadPackages()
 	if err != nil {
 		return err
 	}
 
-	outputMermaidScript(pkgs)
-	//g := graphviz.New()
-	//defer g.Close()
-	//
-	//graph, err := g.Graph()
-	//if err != nil {
-	//	return err
-	//}
-	//
-	//defer graph.Close()
-	//
-	//if err := makeGraphDot(graph, pkgs); err != nil {
-	//	return err
-	//}
-	//
-	//dotFile := filepath.Join(filepath.Dir("."), fmt.Sprintf("%s.dot", filepath.Base("graph_tmp")))
-	//if err := g.RenderFilename(graph, graphviz.XDOT, dotFile); err != nil {
-	//	return err
-	//}
+	outputMermaidScript(channelEntries)
 	return nil
 }
 
-func loadPackages() (map[string]*pkg, error) {
+func loadPackages() (map[string]*pkg, []channelEntry, error) {
 	pkgs := map[string]*pkg{}
+	var channelEntries []channelEntry
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		entryRow := scanner.Text()
-		var e channelEntry
-		//if err := entryRow.Scan(&e.packageName, &e.channelName, &e.bundleName, &e.depth, &e.bundleVersion, &e.bundleSkipRange, &e.replacesBundleName); err != nil {
-		//	return nil, err
-		//}
+		var chanEntry channelEntry
 		fields := strings.Split(entryRow, string('|'))
-		e.packageName = fields[0]
-		e.channelName = fields[1]
-		e.bundleName = fields[2]
-		e.depth, _ = strconv.Atoi(fields[3])
-		e.bundleVersion = fields[4]
-		e.bundleSkipRange = fields[5]
-		e.replacesBundleName = fields[6]
+		chanEntry.packageName = fields[0]
+		chanEntry.channelName = fields[1]
+		chanEntry.bundleName = fields[2]
+		chanEntry.depth, _ = strconv.Atoi(fields[3])
+		chanEntry.bundleVersion = fields[4]
+		chanEntry.bundleSkipRange = fields[5]
+		chanEntry.replacesBundleName = fields[6]
 
 		// Get or create package
-		p, ok := pkgs[e.packageName]
+		p, ok := pkgs[chanEntry.packageName]
 		if !ok {
 			p = &pkg{
-				name:    e.packageName,
+				name:    chanEntry.packageName,
 				bundles: make(map[string]*bundle),
 			}
 		}
-		pkgs[e.packageName] = p
+		pkgs[chanEntry.packageName] = p
 
 		// Get or create bundle
-		b, ok := p.bundles[e.bundleName]
+		bundl, ok := p.bundles[chanEntry.bundleName]
 		if !ok {
-			b = &bundle{
-				name:              e.bundleName,
-				packageName:       e.packageName,
-				minDepth:          e.depth,
-				isBundlePresent:   e.bundleVersion != "",
+			bundl = &bundle{
+				name:              chanEntry.bundleName,
+				packageName:       chanEntry.packageName,
+				minDepth:          chanEntry.depth,
+				isBundlePresent:   chanEntry.bundleVersion != "",
 				channels:          sets.NewString(),
 				replaces:          sets.NewString(),
 				skipRangeReplaces: sets.NewString(),
 			}
-			if e.bundleSkipRange != "" {
-				b.skipRange = e.bundleSkipRange
+			if chanEntry.bundleSkipRange != "" {
+				bundl.skipRange = chanEntry.bundleSkipRange
 			}
-			if e.bundleVersion != "" {
-				b.version = e.bundleVersion
+			if chanEntry.bundleVersion != "" {
+				bundl.version = chanEntry.bundleVersion
 			}
 		}
-		p.bundles[e.bundleName] = b
+		p.bundles[chanEntry.bundleName] = bundl
 
-		b.channels.Insert(e.channelName)
-		if e.replacesBundleName != "" {
-			b.replaces.Insert(e.replacesBundleName)
+		bundl.channels.Insert(chanEntry.channelName)
+		if chanEntry.replacesBundleName != "" {
+			bundl.replaces.Insert(chanEntry.replacesBundleName)
 		}
-		if e.depth < b.minDepth {
-			b.minDepth = e.depth
+		if chanEntry.depth < bundl.minDepth {
+			bundl.minDepth = chanEntry.depth
 		}
-
+		channelEntries = append(channelEntries, chanEntry)
 	}
 	// validate what we have loaded, as far as graphing concerns
 	for _, pkg := range pkgs {
@@ -175,22 +155,53 @@ func loadPackages() (map[string]*pkg, error) {
 		}
 	}
 
-	return pkgs, nil
+	return pkgs, channelEntries, nil
 }
 
-func outputMermaidScript(pkgs map[string]*pkg) {
-	fmt.Fprintln(os.Stdout, "graph TD")
-	fmt.Fprintln(os.Stdout, "	classDef head fill:#ffbfcf;")
-	fmt.Fprintln(os.Stdout, "	classDef installed fill:#34ebba;")
-	cnt := 0
-	for _, pkg := range pkgs {
-		fmt.Fprintf(os.Stdout, "	subgraph %s\n", pkg.name)
-		fmt.Fprintf(os.Stdout, "	%s_A(v0.0.1):::installed --> %s_B(v0.0.2)\n", pkg.name, pkg.name)
-		fmt.Fprintf(os.Stdout, "	end\n")
-		if cnt > 3 {
-			break
+func outputMermaidScript(entries []channelEntry) {
+	indent1 := "  "
+	indent2 := "    "
+	indent3 := "      "
+
+	fmt.Fprintln(os.Stdout, "flowchart LR") // Flowchart left-right header
+	fmt.Fprintln(os.Stdout, indent1+"classDef head fill:#ffbfcf;")
+	fmt.Fprintln(os.Stdout, indent1+"classDef installed fill:#34ebba;")
+	var currPkg string
+	var newPkg string
+	var currChan string
+	var newChan string
+
+	for idx, entry := range entries {
+		currChan = entry.channelName + entry.packageName
+		if currChan != newChan {
+			if newChan != "" {
+				fmt.Fprintf(os.Stdout, "\n"+indent2+"end") // end channel graph
+			}
 		}
-		cnt++
+		currPkg = entry.packageName
+		if currPkg != newPkg {
+			if newPkg != "" {
+				fmt.Fprintf(os.Stdout, "\n"+indent1+"end") // end pkg graph
+			}
+			fmt.Fprintf(os.Stdout, "\n"+indent1+"subgraph "+entry.packageName) // per package graph
+		}
+		if entry.depth == 0 {
+			fmt.Fprintf(os.Stdout, "\n"+indent2+"subgraph "+entry.channelName+" channel") // per channel graph
+			fmt.Fprintf(os.Stdout, "\n"+indent3+strconv.Itoa(idx)+"("+entry.bundleVersion+"):::head")
+			newChan = currChan
+		} else {
+			// catch empty bundleVersion fields, they create a Mermaid syntax error
+			bundleVersion := entry.bundleVersion
+			if bundleVersion == "" {
+				bundleVersion = "x.y.z"
+			}
+			fmt.Fprintf(os.Stdout, " --> "+strconv.Itoa(idx)+"("+bundleVersion+")")
+		}
+		newPkg = currPkg
+		if idx == len(entries)-1 {
+			fmt.Fprintf(os.Stdout, "\n"+indent2+"end") // end channel graph
+			fmt.Fprintf(os.Stdout, "\n"+indent1+"end") // end pkg graph
+		}
 	}
 }
 
