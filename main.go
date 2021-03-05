@@ -66,16 +66,16 @@ func main() {
 }
 
 func run(pkgToGraph string) error {
-	_, channelEntries, err := loadPackages()
+	pkgs, _, err := loadPackages(pkgToGraph)
 	if err != nil {
 		return err
 	}
 
-	outputMermaidScript(channelEntries, pkgToGraph)
+	outputMermaidScript(pkgs, pkgToGraph)
 	return nil
 }
 
-func loadPackages() (map[string]*pkg, []channelEntry, error) {
+func loadPackages(pkgToGraph string) (map[string]*pkg, []channelEntry, error) {
 	pkgs := map[string]*pkg{}
 	var channelEntries []channelEntry
 	var index = 0
@@ -94,6 +94,9 @@ func loadPackages() (map[string]*pkg, []channelEntry, error) {
 		chanEntry.replacesBundleName = fields[6]
 		chanEntry.index = index
 
+		if pkgToGraph != "" && chanEntry.packageName != pkgToGraph {
+			continue
+		}
 		// Get or create package
 		p, ok := pkgs[chanEntry.packageName]
 		if !ok {
@@ -135,33 +138,28 @@ func loadPackages() (map[string]*pkg, []channelEntry, error) {
 		channelEntries = append(channelEntries, chanEntry)
 		index++
 	}
-	// validate what we have loaded, as far as graphing concerns
-	for _, pkg := range pkgs {
-		for _, pkgBundle := range pkg.bundles {
-			// check skipRange with semver
-			if pkgBundle.skipRange == "" {
+	for _, p := range pkgs {
+		for _, pb := range p.bundles {
+			if pb.skipRange == "" {
 				continue
 			}
-			pSkipRange, err := semver.ParseRange(pkgBundle.skipRange)
+			pSkipRange, err := semver.ParseRange(pb.skipRange)
 			if err != nil {
-				log.Warn("invalid skipRange %q for bundle %q: %v -- bundle will not appear in graph\n",
-					pkgBundle.skipRange, pkgBundle.name, err)
-				delete(pkg.bundles, pkgBundle.name)
+				fmt.Errorf("invalid range %q for bundle %q: %v", pb.skipRange, pb.name, err)
 				continue
 			}
-			// check version with semver
-			if !pkgBundle.isBundlePresent {
-				continue
-			}
-			cVersion, err := semver.Parse(pkgBundle.version)
-			if err != nil {
-				log.Warn("invalid version %q for bundle %q: %v -- bundle will not appear in graph\n",
-					pkgBundle.version, pkgBundle.name, err)
-				delete(pkg.bundles, pkgBundle.name)
-				continue
-			}
-			if pSkipRange(cVersion) {
-				pkgBundle.skipRangeReplaces.Insert(pkgBundle.name)
+			for _, cb := range p.bundles {
+				if !cb.isBundlePresent {
+					continue
+				}
+				cVersion, err := semver.Parse(cb.version)
+				if err != nil {
+					fmt.Errorf("invalid version %q for bundle %q: %v", cb.version, cb.name, err)
+					continue
+				}
+				if pSkipRange(cVersion) {
+					pb.skipRangeReplaces.Insert(cb.name)
+				}
 			}
 		}
 	}
@@ -169,52 +167,57 @@ func loadPackages() (map[string]*pkg, []channelEntry, error) {
 	return pkgs, channelEntries, nil
 }
 
-func outputMermaidScript(entries []channelEntry, pkgToGraph string) {
+func outputMermaidScript(pkgs map[string]*pkg, pkgToGraph string) {
+	graphHeader()
+	for _, pkg := range pkgs {
+		allBundleChannels := sets.NewString()                     // we want subgraph organized by channel
+		fmt.Fprintf(os.Stdout, "\n"+indent1+"subgraph "+pkg.name) // per package graph
+		for _, bundle := range pkg.bundles {
+			allBundleChannels = bundle.channels.Union(allBundleChannels)
+		}
+		for _, channel := range allBundleChannels.List() {
+			fmt.Fprintf(os.Stdout, "\n"+indent2+"subgraph "+channel+" channel") // per channel graph
+			replaceSet := sets.NewString()
+			for _, bundle := range pkg.bundles {
+				if bundle.channels.Has(channel) {
+					// if no replaces edges, just write the node
+					if bundle.replaces.Len() == 0 && bundle.skipRangeReplaces.Len() == 0 {
+						if bundle.minDepth == 0 {
+							replaceSet.Insert(bundle.name + "-" + channel + "(" + bundle.version + "):::head")
+						} else {
+							replaceSet.Insert(bundle.name + "-" + channel + "(" + bundle.version + ")")
+						}
+					}
+					for _, replace := range bundle.replaces.List() {
+						if bundle.minDepth == 0 {
+							replaceSet.Insert(bundle.name + "-" + channel + "(" + bundle.version + "):::head" +
+								" --> " + replace + "-" + channel + "(" + pkg.bundles[replace].version + ")")
+						} else {
+							replaceSet.Insert(bundle.name + "-" + channel + "(" + bundle.version + ")" +
+								" --> " + replace + "-" + channel + "(" + pkg.bundles[replace].version + ")")
+						}
+					} // end bundle replaces edge graphing
+					for _, skipReplace := range bundle.skipRangeReplaces.List() {
+						if !bundle.replaces.Has(skipReplace) {
+							fmt.Fprintf(os.Stdout, "\n"+indent3+bundle.name+"-"+
+								channel+" o--o | "+bundle.skipRange+" | "+skipReplace+"-"+channel)
+						}
+					} // end bundle skipReplaces edge graphing
+				}
+			}
+			for _, replaceLine := range replaceSet.List() {
+				fmt.Fprintf(os.Stdout, "\n"+indent3+replaceLine)
+			}
+			fmt.Fprintf(os.Stdout, "\n"+indent2+"end") // end channel graph
+		} // end per channel loop
+		fmt.Fprintf(os.Stdout, "\n"+indent1+"end") // end pkg graph
+	} // end package loop
+}
+
+func graphHeader() {
 	fmt.Fprintln(os.Stdout, "flowchart LR") // Flowchart left-right header
 	fmt.Fprintln(os.Stdout, indent1+"classDef head fill:#ffbfcf;")
 	fmt.Fprintln(os.Stdout, indent1+"classDef installed fill:#34ebba;")
-	var currPkg string
-	var newPkg string
-	var currChan string
-	var newChan string
-
-	for _, entry := range entries {
-		if pkgToGraph != "" && entry.packageName != pkgToGraph {
-			continue
-		}
-		currChan = entry.channelName + entry.packageName
-		if currChan != newChan {
-			if newChan != "" {
-				fmt.Fprintf(os.Stdout, "\n"+indent2+"end") // end channel graph
-			}
-		}
-		currPkg = entry.packageName
-		if currPkg != newPkg {
-			if newPkg != "" {
-				fmt.Fprintf(os.Stdout, "\n"+indent1+"end") // end pkg graph
-			}
-			fmt.Fprintf(os.Stdout, "\n"+indent1+"subgraph "+entry.packageName) // per package graph
-		}
-		if entry.depth == 0 {
-			fmt.Fprintf(os.Stdout, "\n"+indent2+"subgraph "+entry.channelName+" channel") // per channel graph
-			fmt.Fprintf(os.Stdout, "\n"+indent3+strconv.Itoa(entry.index)+"("+entry.bundleVersion+"):::head")
-			newChan = currChan
-		} else {
-			// catch empty bundleVersion fields, they create a Mermaid syntax error
-			bundleVersion := entry.bundleVersion
-			if bundleVersion == "" {
-				bundleVersion = "x.y.z"
-			}
-			fmt.Fprintf(os.Stdout, " --> "+strconv.Itoa(entry.index)+"("+bundleVersion+")")
-		}
-		newPkg = currPkg
-	}
-	finishGraph()
-}
-
-func finishGraph() {
-	fmt.Fprintf(os.Stdout, "\n"+indent2+"end") // end channel graph
-	fmt.Fprintf(os.Stdout, "\n"+indent1+"end") // end pkg graph
 }
 
 func makeGraphDot(graph *cgraph.Graph, pkgs map[string]*pkg) error {

@@ -16,7 +16,11 @@ install:
 run: build
 	sqlite3 -bail -init sqlite3.sql 2>/dev/null | bin/$(PROG_NAME) $(ARGS) 1>$(MERMAID_TEMP_SCRIPT)
 	docker pull minlag/mermaid-cli
-	docker run -v $(PWD)/$(MERMAID_TEMP_SCRIPT):/$(MERMAID_TEMP_SCRIPT) -v /tmp:/tmp -it docker.io/minlag/mermaid-cli:latest -i /$(MERMAID_TEMP_SCRIPT) -o /tmp/$(MERMAID_TEMP_SCRIPT).$(OUTPUT_TYPE)
+	docker run \
+		-v $(PWD)/$(MERMAID_TEMP_SCRIPT):/$(MERMAID_TEMP_SCRIPT) \
+		-v /tmp:/tmp -it \
+		docker.io/minlag/mermaid-cli:latest \
+		-i /$(MERMAID_TEMP_SCRIPT) -o /tmp/$(MERMAID_TEMP_SCRIPT).$(OUTPUT_TYPE)
 	echo "output $(OUTPUT_TYPE) file is /tmp/$(MERMAID_TEMP_SCRIPT).$(OUTPUT_TYPE)"
 	open /tmp/$(MERMAID_TEMP_SCRIPT).$(OUTPUT_TYPE)
 
