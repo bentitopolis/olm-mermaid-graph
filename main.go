@@ -23,7 +23,6 @@ type channelEntry struct {
 	bundleVersion      string
 	bundleSkipRange    string
 	replacesBundleName string
-	index              int
 }
 
 type pkg struct {
@@ -66,19 +65,17 @@ func main() {
 }
 
 func run(pkgToGraph string) error {
-	pkgs, _, err := loadPackages(pkgToGraph)
+	pkgs, err := loadPackages(pkgToGraph)
 	if err != nil {
 		return err
 	}
 
-	outputMermaidScript(pkgs, pkgToGraph)
+	outputMermaidScript(pkgs)
 	return nil
 }
 
-func loadPackages(pkgToGraph string) (map[string]*pkg, []channelEntry, error) {
+func loadPackages(pkgToGraph string) (map[string]*pkg, error) {
 	pkgs := map[string]*pkg{}
-	var channelEntries []channelEntry
-	var index = 0
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
@@ -92,7 +89,6 @@ func loadPackages(pkgToGraph string) (map[string]*pkg, []channelEntry, error) {
 		chanEntry.bundleVersion = fields[4]
 		chanEntry.bundleSkipRange = fields[5]
 		chanEntry.replacesBundleName = fields[6]
-		chanEntry.index = index
 
 		if pkgToGraph != "" && chanEntry.packageName != pkgToGraph {
 			continue
@@ -124,6 +120,9 @@ func loadPackages(pkgToGraph string) (map[string]*pkg, []channelEntry, error) {
 			}
 			if chanEntry.bundleVersion != "" {
 				bundl.version = chanEntry.bundleVersion
+			} else {
+				// catch empty version field because empty '()' are a Mermaid syntax error
+				bundl.version = "x.y.z"
 			}
 		}
 		p.bundles[chanEntry.bundleName] = bundl
@@ -135,8 +134,6 @@ func loadPackages(pkgToGraph string) (map[string]*pkg, []channelEntry, error) {
 		if chanEntry.depth < bundl.minDepth {
 			bundl.minDepth = chanEntry.depth
 		}
-		channelEntries = append(channelEntries, chanEntry)
-		index++
 	}
 	for _, p := range pkgs {
 		for _, pb := range p.bundles {
@@ -164,10 +161,10 @@ func loadPackages(pkgToGraph string) (map[string]*pkg, []channelEntry, error) {
 		}
 	}
 
-	return pkgs, channelEntries, nil
+	return pkgs, nil
 }
 
-func outputMermaidScript(pkgs map[string]*pkg, pkgToGraph string) {
+func outputMermaidScript(pkgs map[string]*pkg) {
 	graphHeader()
 	for _, pkg := range pkgs {
 		allBundleChannels := sets.NewString()                     // we want subgraph organized by channel
@@ -199,8 +196,15 @@ func outputMermaidScript(pkgs map[string]*pkg, pkgToGraph string) {
 					} // end bundle replaces edge graphing
 					for _, skipReplace := range bundle.skipRangeReplaces.List() {
 						if !bundle.replaces.Has(skipReplace) {
-							fmt.Fprintf(os.Stdout, "\n"+indent3+bundle.name+"-"+
-								channel+" o--o | "+bundle.skipRange+" | "+skipReplace+"-"+channel)
+							if bundle.minDepth == 0 {
+								fmt.Fprintf(os.Stdout, "\n"+indent3+bundle.name+"-"+
+									channel+"("+bundle.version+"):::head"+" o--o | "+bundle.skipRange+" | "+
+									skipReplace+"-"+channel+"("+pkg.bundles[skipReplace].version+")")
+							} else {
+								fmt.Fprintf(os.Stdout, "\n"+indent3+bundle.name+"-"+
+									channel+"("+bundle.version+")"+" o--o | "+bundle.skipRange+" | "+
+									skipReplace+"-"+channel+"("+pkg.bundles[skipReplace].version+")")
+							}
 						}
 					} // end bundle skipReplaces edge graphing
 				}
