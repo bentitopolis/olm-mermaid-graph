@@ -18,9 +18,10 @@ run: build
 	docker pull minlag/mermaid-cli
 	docker run \
 		-v $(PWD)/$(MERMAID_TEMP_SCRIPT):/$(MERMAID_TEMP_SCRIPT) \
+		-v $(PWD)/config.json:/config.json \
 		-v /tmp:/tmp -it \
 		docker.io/minlag/mermaid-cli:latest \
-		-i /$(MERMAID_TEMP_SCRIPT) -o /tmp/$(MERMAID_TEMP_SCRIPT).$(OUTPUT_TYPE)
+		-c /config.json -i /$(MERMAID_TEMP_SCRIPT) -o /tmp/$(MERMAID_TEMP_SCRIPT).$(OUTPUT_TYPE)
 	echo "output $(OUTPUT_TYPE) file is /tmp/$(MERMAID_TEMP_SCRIPT).$(OUTPUT_TYPE)"
 	open /tmp/$(MERMAID_TEMP_SCRIPT).$(OUTPUT_TYPE)
 
